@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PIPE DASH</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>PIPE DASH</h1>
+  </header>
+
+  <main>
+    <form id="calc-form">
+      <section class="card">
+        <h2>1. Fluid Type</h2>
+        <div class="fluid-toggle">
+          <label class="radio-pill" title="Fixed design velocity: 1 m/s">
+            <input type="radio" name="fluid_type" value="liquid" checked />
+            <span>Liquid</span>
+          </label>
+          <label class="radio-pill" title="Design velocity: 20 m/s default, editable (typical range 15-30 m/s)">
+            <input type="radio" name="fluid_type" value="gas" />
+            <span>Gas</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>2. Line Identification <small class="optional">(optional — used in the report)</small></h2>
+        <div class="grid grid-3">
+          <label>Stream label
+            <input type="text" name="stream_label" placeholder="STREAM 18" />
+          </label>
+          <label>Equipment 1 tag
+            <input type="text" name="equipment1" placeholder="LT-201" />
+          </label>
+          <label>Equipment 2 tag
+            <input type="text" name="equipment2" placeholder="SR-201" />
+          </label>
+          <label>Temperature 1 (°C)
+            <input type="number" step="any" name="temp1_c" />
+          </label>
+          <label>Temperature 2 (°C)
+            <input type="number" step="any" name="temp2_c" />
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>3. Fluid Properties &amp; Line Data</h2>
+        <div class="grid grid-3">
+          <label>Mass Flowrate (kg/s) *
+            <input type="number" step="any" name="m_flow" required />
+          </label>
+          <label>Density (kg/m³) *
+            <input type="number" step="any" name="rho" required />
+          </label>
+          <label>Viscosity (Pa·s) *
+            <input type="number" step="any" name="mu" required />
+          </label>
+          <label>Length of Pipe (m) *
+            <input type="number" step="any" name="l_pipe" required />
+          </label>
+          <label>Height Change, Δz (m) *
+            <input type="number" step="any" name="delta_z" required />
+          </label>
+          <label>Surface Roughness (mm)
+            <input type="number" step="any" name="epsilon_mm" value="0.0457" />
+          </label>
+          <label id="p1-label">Pressure at Equipment 1 (bar) *
+            <input type="number" step="any" name="p1_bar" required />
+          </label>
+          <label data-fluid="liquid">Pressure at Equipment 2 (bar) *
+            <input type="number" step="any" name="p2_bar" required />
+          </label>
+          <label data-fluid="gas" hidden title="Typical range: 15-30 m/s">Gas Design Velocity (m/s)
+            <input type="number" step="any" name="gas_velocity" value="20" />
+          </label>
+          <label data-fluid="gas" hidden>Stream Temperature (°C) *
+            <input type="number" step="any" name="temp_c" />
+          </label>
+          <label data-fluid="gas" hidden>Molecular Weight (kg/kmol) *
+            <input type="number" step="any" name="molecular_weight" />
+          </label>
+          <label data-fluid="gas" hidden>Compressibility Factor, Z
+            <input type="number" step="any" name="z_factor" value="1.0" />
+          </label>
+          <label data-fluid="gas" hidden>Gamma, Cp/Cv (γ)
+            <input type="number" step="any" name="gamma" value="1.4" />
+          </label>
+          <label data-fluid="gas" hidden>Compressor Efficiency (0-1)
+            <input type="number" step="any" min="0" max="1" name="compressor_efficiency" value="0.78" />
+          </label>
+          <label>Pipe schedule search
+            <select name="schedule">
+              <option value="40" selected>Schedule 40 / Standard (default)</option>
+              <option value="80">Schedule 80</option>
+              <option value="160">Schedule 160</option>
+              <option value="ANY">Any schedule (closest fit) - just grabs whichever pipe size is numerically closest</option>
+            </select>
+          </label>
+          <label id="mover-threshold-label">Pump/Compressor threshold (kW)
+            <input type="number" step="any" name="pump_threshold_kw" value="0.1" />
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>4. Fittings &amp; Valves</h2>
+        <div id="fittings-list"></div>
+        <button type="button" id="add-fitting" class="btn-secondary">+ Add fitting/valve</button>
+      </section>
+
+      <div class="actions">
+        <button type="submit" class="btn-primary">Calculate</button>
+        <button type="button" id="download-report" class="btn-primary alt" disabled>
+          Download DOCX Report
+        </button>
+      </div>
+      <p id="form-error" class="error-text" hidden></p>
+    </form>
+
+    <section id="results" class="card results" hidden>
+      <h2>Results</h2>
+      <div id="results-body"></div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Pipe schedule &amp; fitting K-values sourced from Pipings_Data.xlsx (Perry's T10-22 / standard K-value table).</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
