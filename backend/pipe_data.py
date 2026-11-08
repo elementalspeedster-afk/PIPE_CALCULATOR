@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+import openpyxl
 import pandas as pd
 
 DATA_PATH = Path(__file__).resolve().parent.parent / "files" / "Pipings_Data.xlsx"
@@ -8,6 +9,7 @@ DATA_PATH = Path(__file__).resolve().parent.parent / "files" / "Pipings_Data.xls
 _TYPO_FIXES = [
     {"nominal": 2.0, "schedule_contains": "40", "field": "Inside diameter, in", "value": 2.067},
     {"nominal": 14.0, "schedule_equals": "XS", "field": "Wall thickness, in", "value": 0.5},
+    {"nominal": 3.3333, "field": "Nominal pipe size, in", "value": 3.5},
 ]
 
 
@@ -39,6 +41,11 @@ def _is_schedule_40(label):
     return any(t in ("40", "40ST", "40S", "ST") for t in tokens)
 
 
+def _is_schedule_80(label):
+    tokens = [t.strip().upper() for t in str(label).replace(",", " ").split()]
+    return any(t in ("80", "80XS") for t in tokens)
+
+
 def _row_to_pipe(row):
     return {
         "nominal_pipe_size_in": float(row["Nominal pipe size, in"]),
@@ -55,6 +62,8 @@ def find_closest_pipe(calculated_id_in, schedule="40", search_by="Inside diamete
     fell_back = False
     if schedule == "40":
         candidates = df[df["Schedule no."].apply(_is_schedule_40)]
+    elif schedule == "80":
+        candidates = df[df["Schedule no."].apply(_is_schedule_80)]
     elif schedule == "ANY":
         candidates = df
     else:
