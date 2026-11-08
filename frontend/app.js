@@ -5,14 +5,327 @@ const resultsSection = document.getElementById("results");
 const resultsBody = document.getElementById("results-body");
 const downloadBtn = document.getElementById("download-report");
 const formError = document.getElementById("form-error");
-const moverThresholdLabel = document.getElementById("mover-threshold-label");
-const p1Label = document.getElementById("p1-label");
 const thresholdInput = form.pump_threshold_kw;
 
 const DEFAULT_THRESHOLD = { liquid: 0.1, gas: 0.3 };
 
 let knownFittings = [];
 let lastPayload = null;
+
+const SETTINGS_KEY = "pipedash.settings.v1";
+const ORIGINAL_SETTINGS = {
+  app_name: "PIPE DASH",
+  theme_color: "#1f3b57",
+  accent_color: "#1f8a70",
+  dark_mode: false,
+  epsilon_mm: 0.0457,
+  schedule: "40",
+  liquid_threshold_kw: 0.1,
+  gas_threshold_kw: 0.3,
+  gas_velocity: 20,
+  z_factor: 1.0,
+  gamma: 1.4,
+  compressor_efficiency: 0.78,
+  font: "segoe",
+  text_size: "100",
+  text_color: "",
+  input_color: "",
+  results_position: "below",
+};
+const MODE_COLORS = {
+  light: { text: "#222233", input: "#ffffff" },
+  dark: { text: "#e4e9ee", input: "#151b21" },
+};
+const OPTIONAL_COLORS = { text_color: "text", input_color: "input" };
+const FONT_STACKS = {
+  segoe: '"Segoe UI", system-ui, -apple-system, sans-serif',
+  arial: 'Arial, Helvetica, sans-serif',
+  calibri: 'Calibri, Carlito, "Segoe UI", sans-serif',
+  verdana: 'Verdana, Geneva, sans-serif',
+  tahoma: 'Tahoma, Verdana, sans-serif',
+  cambria: 'Cambria, Caladea, Georgia, serif',
+  georgia: 'Georgia, "Times New Roman", serif',
+  times: '"Times New Roman", Times, serif',
+  consolas: 'Consolas, "Courier New", monospace',
+};
+const TEXT_SIZES = ["90", "100", "112", "125"];
+const NUMBER_SETTINGS = [
+  "epsilon_mm", "liquid_threshold_kw", "gas_threshold_kw",
+  "gas_velocity", "z_factor", "gamma", "compressor_efficiency",
+];
+const FORM_DEFAULT_FIELDS = [
+  "epsilon_mm", "schedule", "gas_velocity", "z_factor", "gamma", "compressor_efficiency",
+];
+const SCHEDULE_CHOICES = ["40", "80", "160", "ANY"];
+
+const FIELD_LABELS = [
+  { key: "stream_label", text: "Stream label", group: "Line identification" },
+  { key: "equipment1", text: "Equipment 1 tag", group: "Line identification" },
+  { key: "equipment2", text: "Equipment 2 tag", group: "Line identification" },
+  { key: "temp1_c", text: "Temperature 1 (°C)", group: "Line identification" },
+  { key: "temp2_c", text: "Temperature 2 (°C)", group: "Line identification" },
+  { key: "m_flow", text: "Mass Flowrate (kg/s)", req: true, group: "Liquid & gas" },
+  { key: "rho", text: "Density (kg/m³)", req: true, group: "Liquid & gas" },
+  { key: "mu", text: "Viscosity (Pa·s)", req: true, group: "Liquid & gas" },
+  { key: "l_pipe", text: "Length of Pipe (m)", req: true, group: "Liquid & gas" },
+  { key: "delta_z", text: "Height Change, Δz (m)", req: true, group: "Liquid & gas" },
+  { key: "epsilon_mm", text: "Surface Roughness (mm)", group: "Liquid & gas" },
+  { key: "schedule", text: "Pipe schedule search", group: "Liquid & gas" },
+  { key: "p1_bar:liquid", field: "p1_bar", fluid: "liquid", text: "Pressure at Equipment 1 (bar)", req: true, group: "Liquid only" },
+  { key: "p2_bar", text: "Pressure at Equipment 2 (bar)", req: true, group: "Liquid only" },
+  { key: "pump_threshold_kw:liquid", field: "pump_threshold_kw", fluid: "liquid", text: "Pump threshold (kW)", group: "Liquid only" },
+  { key: "p1_bar:gas", field: "p1_bar", fluid: "gas", text: "Known Pressure, P1 (bar)", req: true, group: "Gas only" },
+  { key: "gas_velocity", text: "Gas Design Velocity (m/s)", group: "Gas only" },
+  { key: "temp_c", text: "Stream Temperature (°C)", req: true, group: "Gas only" },
+  { key: "molecular_weight", text: "Molecular Weight (kg/kmol)", req: true, group: "Gas only" },
+  { key: "z_factor", text: "Compressibility Factor, Z", group: "Gas only" },
+  { key: "gamma", text: "Gamma, Cp/Cv (γ)", group: "Gas only" },
+  { key: "compressor_efficiency", text: "Compressor Efficiency (0-1)", group: "Gas only" },
+  { key: "pump_threshold_kw:gas", field: "pump_threshold_kw", fluid: "gas", text: "Compressor threshold (kW)", group: "Gas only" },
+];
+const LABEL_KEYS = FIELD_LABELS.map((l) => l.key);
+
+const settingsDialog = document.getElementById("settings-dialog");
+const settingsForm = document.getElementById("settings-form");
+const settingsNote = document.getElementById("settings-note");
+const appTitle = document.getElementById("app-title");
+
+function cleanSettings(raw) {
+  const out = { ...ORIGINAL_SETTINGS, labels: {} };
+  if (!raw || typeof raw !== "object") return out;
+  if (typeof raw.app_name === "string" && raw.app_name.trim()) {
+    out.app_name = raw.app_name.trim().slice(0, 40);
+  }
+  ["theme_color", "accent_color"].forEach((k) => {
+    if (typeof raw[k] === "string" && /^#[0-9a-f]{6}$/i.test(raw[k])) out[k] = raw[k];
+  });
+  if (typeof raw.dark_mode === "boolean") out.dark_mode = raw.dark_mode;
+  if (SCHEDULE_CHOICES.includes(raw.schedule)) out.schedule = raw.schedule;
+  if (Object.hasOwn(FONT_STACKS, raw.font)) out.font = raw.font;
+  if (["below", "right"].includes(raw.results_position)) out.results_position = raw.results_position;
+  Object.entries(OPTIONAL_COLORS).forEach(([k, part]) => {
+    const v = typeof raw[k] === "string" ? raw[k].toLowerCase() : "";
+    const isModeDefault = v === MODE_COLORS.light[part] || v === MODE_COLORS.dark[part];
+    if (/^#[0-9a-f]{6}$/.test(v) && !isModeDefault) out[k] = v;
+  });
+  if (TEXT_SIZES.includes(String(raw.text_size))) out.text_size = String(raw.text_size);
+  NUMBER_SETTINGS.forEach((k) => {
+    const v = Number(raw[k]);
+    if (raw[k] !== "" && raw[k] !== null && Number.isFinite(v) && v >= 0) out[k] = v;
+  });
+  if (out.compressor_efficiency > 1 || out.compressor_efficiency === 0) {
+    out.compressor_efficiency = ORIGINAL_SETTINGS.compressor_efficiency;
+  }
+  out.labels = {};
+  if (raw.labels && typeof raw.labels === "object") {
+    LABEL_KEYS.forEach((k) => {
+      const v = raw.labels[k];
+      if (typeof v === "string" && v.trim()) out.labels[k] = v.trim().slice(0, 60);
+    });
+  }
+  return out;
+}
+
+function loadSettings() {
+  try {
+    return cleanSettings(JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"));
+  } catch (err) {
+    return cleanSettings(null);
+  }
+}
+
+function storeSettings(s) {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function mixWithWhite(hex, amount) {
+  const rgb = hexToRgb(hex).map((c) => Math.round(c + (255 - c) * amount));
+  return "#" + rgb.map((c) => c.toString(16).padStart(2, "0")).join("");
+}
+
+function textColorOn(hex) {
+  const [r, g, b] = hexToRgb(hex).map((c) => {
+    const x = c / 255;
+    return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+  });
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return lum > 0.4 ? "#111111" : "#ffffff";
+}
+
+function applyAppearance(s) {
+  const root = document.documentElement;
+  document.title = s.app_name;
+  appTitle.textContent = s.app_name;
+  root.dataset.theme = s.dark_mode ? "dark" : "light";
+  root.style.setProperty("--navy", s.theme_color);
+  root.style.setProperty("--navy-light", mixWithWhite(s.theme_color, 0.18));
+  root.style.setProperty("--accent", s.accent_color);
+  root.style.setProperty("--font", FONT_STACKS[s.font]);
+  document.querySelector("main").classList.toggle("layout-side", s.results_position === "right");
+  ["--text", "--text-muted", "--input-bg", "--input-text"].forEach((v) => root.style.removeProperty(v));
+  if (s.text_color) {
+    root.style.setProperty("--text", s.text_color);
+    root.style.setProperty("--text-muted", s.text_color + "cc");
+  }
+  if (s.input_color) {
+    root.style.setProperty("--input-bg", s.input_color);
+    root.style.setProperty("--input-text", textColorOn(s.input_color));
+  }
+  root.style.fontSize = s.text_size === "100" ? "" : `${s.text_size}%`;
+  root.style.setProperty("--on-theme", textColorOn(s.theme_color));
+  root.style.setProperty("--on-accent", textColorOn(s.accent_color));
+  const lum = textColorOn(s.theme_color) === "#111111";
+  root.style.setProperty(
+    "--heading",
+    s.dark_mode ? mixWithWhite(s.theme_color, 0.6) : lum ? "#223" : s.theme_color
+  );
+  applyLabels(s.labels || {});
+}
+
+function applyLabels(labels) {
+  const type = form.fluid_type.value;
+  FIELD_LABELS.forEach((item) => {
+    if (item.fluid && item.fluid !== type) return;
+    const field = form.elements[item.field || item.key];
+    const label = field && field.closest("label");
+    if (!label) return;
+    const text = labels[item.key] || item.text;
+    label.firstChild.textContent = text + (item.req ? " *" : "") + " ";
+  });
+}
+
+function buildLabelSettings() {
+  const box = document.getElementById("label-settings");
+  let lastGroup = null;
+  FIELD_LABELS.forEach((item) => {
+    if (item.group !== lastGroup) {
+      const head = document.createElement("p");
+      head.className = "label-group";
+      head.textContent = item.group;
+      box.appendChild(head);
+      lastGroup = item.group;
+    }
+    const wrap = document.createElement("label");
+    wrap.appendChild(document.createTextNode(item.text));
+    const input = document.createElement("input");
+    input.type = "text";
+    input.maxLength = 60;
+    input.dataset.labelKey = item.key;
+    wrap.appendChild(input);
+    box.appendChild(wrap);
+  });
+}
+buildLabelSettings();
+
+function applyDefaults(s, previous) {
+  FORM_DEFAULT_FIELDS.forEach((name) => {
+    const field = form[name];
+    if (!previous || String(field.value) === String(previous[name]) || field.value === "") {
+      field.value = s[name];
+    }
+  });
+  const type = form.fluid_type.value;
+  const oldThreshold = previous
+    ? (type === "liquid" ? previous.liquid_threshold_kw : previous.gas_threshold_kw)
+    : null;
+  DEFAULT_THRESHOLD.liquid = s.liquid_threshold_kw;
+  DEFAULT_THRESHOLD.gas = s.gas_threshold_kw;
+  if (!previous || Number(thresholdInput.value) === oldThreshold || thresholdInput.value === "") {
+    thresholdInput.value = DEFAULT_THRESHOLD[type];
+  }
+  thresholdInput.dataset.lastDefault = DEFAULT_THRESHOLD[type];
+  document.getElementById("gas-pill").title =
+    `Design velocity: ${s.gas_velocity} m/s default, editable (typical range 15-30 m/s)`;
+}
+
+function fillSettingsForm(s) {
+  Object.keys(ORIGINAL_SETTINGS).forEach((name) => {
+    const field = settingsForm.elements[name];
+    if (field.type === "checkbox") field.checked = s[name];
+    else field.value = s[name];
+  });
+  syncOptionalColorPickers(s);
+  const labels = s.labels || {};
+  settingsForm.querySelectorAll("[data-label-key]").forEach((input) => {
+    input.value = labels[input.dataset.labelKey] || "";
+  });
+}
+
+function readSettingsForm() {
+  const raw = {};
+  Object.keys(ORIGINAL_SETTINGS).forEach((name) => {
+    const field = settingsForm.elements[name];
+    raw[name] = field.type === "checkbox" ? field.checked : field.value;
+  });
+  raw.labels = {};
+  settingsForm.querySelectorAll("[data-label-key]").forEach((input) => {
+    raw.labels[input.dataset.labelKey] = input.value;
+  });
+  return cleanSettings(raw);
+}
+
+let currentSettings = loadSettings();
+applyAppearance(currentSettings);
+applyDefaults(currentSettings, null);
+
+document.getElementById("open-settings").addEventListener("click", () => {
+  fillSettingsForm(currentSettings);
+  settingsNote.hidden = true;
+  settingsDialog.showModal();
+});
+
+document.getElementById("settings-cancel").addEventListener("click", () => {
+  applyAppearance(currentSettings);
+  settingsDialog.close();
+});
+
+settingsDialog.addEventListener("cancel", () => applyAppearance(currentSettings));
+
+document.getElementById("settings-reset").addEventListener("click", () => {
+  fillSettingsForm(ORIGINAL_SETTINGS);
+  applyAppearance(ORIGINAL_SETTINGS);
+  settingsNote.textContent = "Original settings filled in. Click Save to keep them.";
+  settingsNote.hidden = false;
+});
+
+function syncOptionalColorPickers(s) {
+  const mode = MODE_COLORS[s.dark_mode ? "dark" : "light"];
+  Object.entries(OPTIONAL_COLORS).forEach(([k, part]) => {
+    settingsForm.elements[k].value = s[k] || mode[part];
+  });
+}
+
+settingsForm.addEventListener("input", () => {
+  const preview = readSettingsForm();
+  syncOptionalColorPickers(preview);
+  applyAppearance(preview);
+});
+
+settingsForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const previous = currentSettings;
+  currentSettings = readSettingsForm();
+  const saved = storeSettings(currentSettings);
+  applyAppearance(currentSettings);
+  applyDefaults(currentSettings, previous);
+  if (!saved) {
+    settingsNote.textContent =
+      "Applied, but this browser blocked saving, so it will reset when the page reloads.";
+    settingsNote.hidden = false;
+    return;
+  }
+  settingsDialog.close();
+});
 
 function fmt(value, digits = 4) {
   if (value === 0) return "0";
@@ -26,21 +339,9 @@ function fmt(value, digits = 4) {
   return value.toFixed(Math.min(decimals, 6));
 }
 
-function fluidWord() {
-  const type = form.fluid_type.value;
-  return type === "liquid" ? "Pump" : "Compressor";
-}
-
-function updateMoverLabel() {
-  moverThresholdLabel.firstChild.textContent = `${fluidWord()} threshold (kW)`;
-}
-
 function syncFluidFields() {
   const type = form.fluid_type.value;
-  updateMoverLabel();
-
-  p1Label.firstChild.textContent =
-    type === "liquid" ? "Pressure at Equipment 1 (bar) *" : "Known Pressure, P1 (bar) *";
+  applyLabels(currentSettings.labels);
 
   document.querySelectorAll("[data-fluid]").forEach((label) => {
     const show = label.dataset.fluid === type;
@@ -257,7 +558,10 @@ function renderResults(r) {
 
   resultsBody.innerHTML = html;
   resultsSection.hidden = false;
-  resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  const sideBySide = document.querySelector("main").classList.contains("layout-side")
+    && window.matchMedia("(min-width: 1000px)").matches;
+  if (sideBySide) resultsSection.scrollTop = 0;
+  else resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function showError(msg) {

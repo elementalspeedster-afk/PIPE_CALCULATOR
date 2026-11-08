@@ -8,8 +8,108 @@
 </head>
 <body>
   <header class="app-header">
-    <h1>PIPE DASH</h1>
+    <h1 id="app-title">PIPE DASH</h1>
+    <button type="button" id="open-settings" class="settings-btn" title="Settings">⚙ Settings</button>
   </header>
+
+  <dialog id="settings-dialog">
+    <form id="settings-form">
+      <h2>Settings</h2>
+
+      <h3>Appearance</h3>
+      <div class="grid grid-2">
+        <label>App name
+          <input type="text" name="app_name" maxlength="40" placeholder="PIPE DASH" />
+        </label>
+        <label class="check-label">
+          <span><input type="checkbox" name="dark_mode" /> Dark mode</span>
+        </label>
+        <label>Theme color
+          <input type="color" name="theme_color" />
+        </label>
+        <label>Accent color
+          <input type="color" name="accent_color" />
+        </label>
+        <label>Text color
+          <input type="color" name="text_color" />
+        </label>
+        <label>Input box color
+          <input type="color" name="input_color" />
+        </label>
+        <label>Font
+          <select name="font">
+            <option value="segoe">Segoe UI (default)</option>
+            <option value="arial">Arial</option>
+            <option value="calibri">Calibri</option>
+            <option value="verdana">Verdana</option>
+            <option value="tahoma">Tahoma</option>
+            <option value="cambria">Cambria</option>
+            <option value="georgia">Georgia</option>
+            <option value="times">Times New Roman</option>
+            <option value="consolas">Consolas</option>
+          </select>
+        </label>
+        <label>Results position
+          <select name="results_position">
+            <option value="below">Below the inputs (default)</option>
+            <option value="right">Right side</option>
+          </select>
+        </label>
+        <label>Text size
+          <select name="text_size">
+            <option value="90">Small</option>
+            <option value="100">Normal (default)</option>
+            <option value="112">Large</option>
+            <option value="125">Extra large</option>
+          </select>
+        </label>
+      </div>
+
+      <h3>Default values</h3>
+      <div class="grid grid-2">
+        <label>Surface Roughness (mm)
+          <input type="number" step="any" min="0" name="epsilon_mm" />
+        </label>
+        <label>Pipe schedule search
+          <select name="schedule">
+            <option value="40">Schedule 40 / Standard</option>
+            <option value="80">Schedule 80</option>
+            <option value="160">Schedule 160</option>
+            <option value="ANY">Any schedule (closest fit)</option>
+          </select>
+        </label>
+        <label>Pump threshold, liquid (kW)
+          <input type="number" step="any" min="0" name="liquid_threshold_kw" />
+        </label>
+        <label>Compressor threshold, gas (kW)
+          <input type="number" step="any" min="0" name="gas_threshold_kw" />
+        </label>
+        <label>Gas Design Velocity (m/s)
+          <input type="number" step="any" min="0" name="gas_velocity" />
+        </label>
+        <label>Compressibility Factor, Z
+          <input type="number" step="any" min="0" name="z_factor" />
+        </label>
+        <label>Gamma, Cp/Cv (γ)
+          <input type="number" step="any" min="0" name="gamma" />
+        </label>
+        <label>Compressor Efficiency (0-1)
+          <input type="number" step="any" min="0" max="1" name="compressor_efficiency" />
+        </label>
+      </div>
+
+      <h3>Field labels</h3>
+      <p class="optional">You may rename how each field is shown based on your preferences.</p>
+      <div id="label-settings" class="grid grid-2"></div>
+
+      <div class="actions settings-actions">
+        <button type="submit" class="btn-primary">Save</button>
+        <button type="button" id="settings-cancel" class="btn-secondary">Cancel</button>
+        <button type="button" id="settings-reset" class="btn-secondary">Reset to original</button>
+      </div>
+      <p id="settings-note" class="optional" hidden></p>
+    </form>
+  </dialog>
 
   <main>
     <form id="calc-form">
@@ -20,7 +120,7 @@
             <input type="radio" name="fluid_type" value="liquid" checked />
             <span>Liquid</span>
           </label>
-          <label class="radio-pill" title="Design velocity: 20 m/s default, editable (typical range 15-30 m/s)">
+          <label class="radio-pill" id="gas-pill" title="Design velocity: 20 m/s default, editable (typical range 15-30 m/s)">
             <input type="radio" name="fluid_type" value="gas" />
             <span>Gas</span>
           </label>
@@ -125,6 +225,10 @@
     <section id="results" class="card results" hidden>
       <h2>Results</h2>
       <div id="results-body"></div>
+    </section>
+    <section class="card results-placeholder">
+      <h2>Results</h2>
+      <p class="optional">Results will appear here after you click Calculate.</p>
     </section>
   </main>
 
