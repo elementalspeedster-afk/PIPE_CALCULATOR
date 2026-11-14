@@ -429,6 +429,163 @@ async function loadFittings() {
 }
 loadFittings();
 
+const R_GAS = 8.314462618;
+const lkChem = document.getElementById("lk-chem");
+const lkTemp = document.getElementById("lk-temp");
+const lkPres = document.getElementById("lk-pres");
+const lkMsg = document.getElementById("lk-msg");
+let fluidData = null;
+let lastLookup = null;
+
+async function loadFluidData() {
+  try {
+    const res = await fetch("fluid_data.json");
+    fluidData = await res.json();
+    lkChem.innerHTML = '<option value="">— choose a chemical —</option>' +
+      fluidData.chemicals.map((c, i) => `<option value="${i}">${c.name}</option>`).join("");
+  } catch (err) {
+    lkChem.innerHTML = '<option value="">Could not load the chemical list</option>';
+  }
+}
+loadFluidData();
+
+function sig5(x) {
+  return Number(x.toPrecision(5));
+}
+
+function tableRange(tab) {
+  const tMax = tab.t0 + tab.dt * (tab.mu.length - 1);
+  return [tab.t0, tMax];
+}
+
+function interpolate(tab, key, tK, useLog) {
+  const arr = tab[key];
+  const raw = (tK - tab.t0) / tab.dt;
+  if (raw < -1e-6 || raw > arr.length - 1 + 1e-6) return null;
+  const x = Math.min(Math.max(raw, 0), arr.length - 1);
+  const i = Math.min(Math.floor(x), arr.length - 2);
+  const f = x - i;
+  const a = arr[i], b = arr[i + 1];
+  if (a == null || b == null) return null;
+  if (useLog) return Math.exp(Math.log(a) + f * (Math.log(b) - Math.log(a)));
+  return a + f * (b - a);
+}
+
+function showLookup(html, isError) {
+  lkMsg.innerHTML = html;
+  lkMsg.classList.toggle("is-error", !!isError);
+  lkMsg.hidden = false;
+}
+
+function readNumber(input) {
+  return input.value === "" ? NaN : parseFloat(input.value);
+}
+
+function fillFromDatabase() {
+  if (!fluidData) {
+    showLookup("The chemical list is still loading. Try again in a moment.", true);
+    return;
+  }
+  const chem = fluidData.chemicals[lkChem.value];
+  if (!chem) {
+    showLookup("Choose a chemical first.", true);
+    return;
+  }
+  const type = form.fluid_type.value;
+  const phaseWord = type === "liquid" ? "liquid" : "gas";
+  const tempField = type === "liquid" ? form.temp1_c : form.temp_c;
+
+  let tC = readNumber(lkTemp);
+  if (!Number.isFinite(tC)) tC = readNumber(tempField);
+  let pBar = readNumber(lkPres);
+  if (!Number.isFinite(pBar)) pBar = readNumber(form.p1_bar);
+  if (!Number.isFinite(tC)) {
+    showLookup("Enter the temperature (°C) for the lookup.", true);
+    return;
+  }
+  if (type === "gas" && !(pBar > 0)) {
+    showLookup("Enter the pressure (bar, absolute) — gas density depends on it.", true);
+    return;
+  }
+  lkTemp.value = tC;
+  if (Number.isFinite(pBar)) lkPres.value = pBar;
+
+  const tab = chem[type === "liquid" ? "liq" : "gas"];
+  if (!tab) {
+    showLookup(`The database has no ${phaseWord} data for ${chem.name}.`, true);
+    return;
+  }
+  const tK = tC + 273.15;
+  const [tMin, tMax] = tableRange(tab);
+  const mu = interpolate(tab, "mu", tK, true);
+  if (mu == null) {
+    showLookup(
+      `${chem.name} (${phaseWord}) data covers ${fmt(tMin - 273.15, 3)} to ` +
+      `${fmt(tMax - 273.15, 3)} °C only. ${fmt(tC, 4)} °C is outside that range.`, true);
+    return;
+  }
+
+  let rho;
+  let extra = "";
+  if (type === "liquid") {
+    rho = interpolate(tab, "rho", tK, false);
+    if (rho == null) {
+      showLookup(`No liquid density for ${chem.name} at ${fmt(tC, 4)} °C.`, true);
+      return;
+    }
+  } else {
+    const z = parseFloat(form.z_factor.value) || 1;
+    rho = (pBar * 1e5 * chem.mw / 1000) / (z * R_GAS * tK);
+    form.molecular_weight.value = sig5(chem.mw);
+    if (form.temp_c.value === "") form.temp_c.value = tC;
+    if (form.p1_bar.value === "" && Number.isFinite(pBar)) form.p1_bar.value = pBar;
+    extra = `, MW = ${fmt(chem.mw, 5)} kg/kmol (filled in too)`;
+    if (z !== 1) extra += `; density uses Z = ${fmt(z)} from the form`;
+  }
+
+  const rhoVal = sig5(rho);
+  const muVal = sig5(mu);
+  form.rho.value = rhoVal;
+  form.mu.value = muVal;
+
+  let warn = "";
+  const ps = interpolate(tab, "ps", tK, true);
+  if (ps != null && Number.isFinite(pBar)) {
+    const psBar = ps / 1e5;
+    if (type === "liquid" && pBar * 1e5 < ps) {
+      warn = `<br><span class="warn">Check: at ${fmt(tC, 4)} °C, ${chem.name} boils below ` +
+        `${fmt(psBar, 4)} bar. At ${fmt(pBar, 4)} bar it would be a vapor, not a liquid.</span>`;
+    } else if (type === "gas" && pBar * 1e5 > ps) {
+      warn = `<br><span class="warn">Check: at ${fmt(tC, 4)} °C, ${chem.name} condenses above ` +
+        `${fmt(psBar, 4)} bar. At ${fmt(pBar, 4)} bar it would be a liquid, not a gas.</span>`;
+    }
+  }
+
+  if (type === "gas" &&
+      (readNumber(form.temp_c) !== tC || readNumber(form.p1_bar) !== pBar)) {
+    warn += `<br><span class="warn">Note: the Stream Temperature / Known Pressure (P1) in the form ` +
+      `are different from the lookup conditions above, so this density may not match the line.</span>`;
+  }
+
+  const pText = Number.isFinite(pBar) ? `, ${fmt(pBar, 4)} bar` : "";
+  lastLookup = {
+    type, rho: rhoVal, mu: muVal,
+    text: `${chem.name} (${phaseWord}) at ${fmt(tC, 4)} °C${pText}, from the Python thermo library`,
+  };
+  showLookup(
+    `Filled in from the thermo database: ${chem.name} (${phaseWord}) at ${fmt(tC, 4)} °C${pText} → ` +
+    `density = ${fmt(rhoVal, 5)} kg/m³, viscosity = ${fmt(muVal, 5)} Pa·s${extra}.` + warn, false);
+}
+
+document.getElementById("lk-fill").addEventListener("click", fillFromDatabase);
+
+function propertySource(payload) {
+  if (!lastLookup) return undefined;
+  const same = lastLookup.type === payload.fluid_type
+    && lastLookup.rho === payload.rho && lastLookup.mu === payload.mu;
+  return same ? lastLookup.text : undefined;
+}
+
 function collectFittings() {
   const rows = [...fittingsList.querySelectorAll(".fitting-row")];
   return rows.map((row) => {
@@ -479,6 +636,7 @@ function buildPayload() {
     payload.gamma = parseFloat(data.get("gamma"));
     payload.compressor_efficiency = parseFloat(data.get("compressor_efficiency"));
   }
+  meta.property_source = propertySource(payload);
   return payload;
 }
 

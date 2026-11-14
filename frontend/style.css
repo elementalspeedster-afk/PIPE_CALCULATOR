@@ -216,7 +216,7 @@ input:focus, select:focus {
 
 .fitting-row {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr auto;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: end;
 }
@@ -224,6 +224,7 @@ input:focus, select:focus {
 .fitting-row label {
   margin: 0;
 }
+.fitting-row select, .fitting-row input { width: 100%; min-width: 0; }
 
 .remove-fitting {
   background: none;
@@ -379,6 +380,33 @@ footer {
 }
 
 @media (max-width: 640px) {
-  .fitting-row { grid-template-columns: 1fr 1fr; }
+  .fitting-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .settings-btn { position: static; transform: none; margin-top: 10px; }
 }
+
+.lookup {
+  background: var(--soft-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+
+.lookup-title {
+  margin: 0 0 10px;
+  font-weight: 600;
+  color: var(--heading);
+  font-size: 0.95rem;
+}
+
+.lookup-actions { margin-top: 12px; }
+
+.lookup-msg {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.lookup-msg.is-error { color: var(--error); }
+.lookup-msg .warn { color: var(--error); font-weight: 600; }

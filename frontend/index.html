@@ -150,6 +150,26 @@
 
       <section class="card">
         <h2>3. Fluid Properties &amp; Line Data</h2>
+        <div class="lookup" id="lookup">
+          <p class="lookup-title">Get density &amp; viscosity from the thermo database <small class="optional">(optional — or type them in below)</small></p>
+          <div class="grid grid-3">
+            <label>Chemical
+              <select id="lk-chem">
+                <option value="">Loading list…</option>
+              </select>
+            </label>
+            <label>Temperature (°C)
+              <input type="number" step="any" id="lk-temp" />
+            </label>
+            <label>Pressure (bar, absolute)
+              <input type="number" step="any" id="lk-pres" />
+            </label>
+          </div>
+          <div class="lookup-actions">
+            <button type="button" id="lk-fill" class="btn-secondary">Fill in density &amp; viscosity</button>
+          </div>
+          <p id="lk-msg" class="lookup-msg" hidden></p>
+        </div>
         <div class="grid grid-3">
           <label>Mass Flowrate (kg/s) *
             <input type="number" step="any" name="m_flow" required />
@@ -233,7 +253,7 @@
   </main>
 
   <footer>
-    <p>Pipe schedule &amp; fitting K-values sourced from Pipings_Data.xlsx (Perry's T10-22 / standard K-value table).</p>
+    <p>Pipe schedule &amp; fitting K-values sourced from Pipings_Data.xlsx (Perry's T10-22 / standard K-value table). Density &amp; viscosity lookup data from the Python thermo library.</p>
   </footer>
 
   <script src="app.js"></script>
