@@ -129,7 +129,7 @@ def build_report(result, meta=None):
     _p(doc, f"Density: {fmt(inp['rho'])} kg/m³")
     _p(doc, f"Viscosity: {fmt(inp['mu'])} Pa·s")
     if meta.get("property_source"):
-        _p(doc, f"Density and viscosity source: {meta['property_source']}")
+        _p(doc, f"Fluid property source: {meta['property_source']}")
     _p(doc, f"Surface Roughness: {fmt(inp['epsilon_mm'])} mm")
     _p(doc, f"Design Velocity: {fmt(inp['v_fixed'])} m/s")
 
