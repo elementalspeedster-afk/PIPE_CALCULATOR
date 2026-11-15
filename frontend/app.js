@@ -14,7 +14,6 @@ let lastPayload = null;
 
 const SETTINGS_KEY = "pipedash.settings.v1";
 const ORIGINAL_SETTINGS = {
-  app_name: "PIPE DASH",
   theme_color: "#1f3b57",
   accent_color: "#1f8a70",
   dark_mode: false,
@@ -88,14 +87,10 @@ const LABEL_KEYS = FIELD_LABELS.map((l) => l.key);
 const settingsDialog = document.getElementById("settings-dialog");
 const settingsForm = document.getElementById("settings-form");
 const settingsNote = document.getElementById("settings-note");
-const appTitle = document.getElementById("app-title");
 
 function cleanSettings(raw) {
   const out = { ...ORIGINAL_SETTINGS, labels: {} };
   if (!raw || typeof raw !== "object") return out;
-  if (typeof raw.app_name === "string" && raw.app_name.trim()) {
-    out.app_name = raw.app_name.trim().slice(0, 40);
-  }
   ["theme_color", "accent_color"].forEach((k) => {
     if (typeof raw[k] === "string" && /^#[0-9a-f]{6}$/i.test(raw[k])) out[k] = raw[k];
   });
@@ -164,8 +159,6 @@ function textColorOn(hex) {
 
 function applyAppearance(s) {
   const root = document.documentElement;
-  document.title = s.app_name;
-  appTitle.textContent = s.app_name;
   root.dataset.theme = s.dark_mode ? "dark" : "light";
   root.style.setProperty("--navy", s.theme_color);
   root.style.setProperty("--navy-light", mixWithWhite(s.theme_color, 0.18));
@@ -436,13 +429,20 @@ const lkPres = document.getElementById("lk-pres");
 const lkMsg = document.getElementById("lk-msg");
 let fluidData = null;
 let lastLookup = null;
+let chemOptions = "";
 
 async function loadFluidData() {
   try {
     const res = await fetch("fluid_data.json");
     fluidData = await res.json();
-    lkChem.innerHTML = '<option value="">— choose a chemical —</option>' +
-      fluidData.chemicals.map((c, i) => `<option value="${i}">${c.name}</option>`).join("");
+    const opts = (salt) => fluidData.chemicals
+      .map((c, i) => (!!c.salt === salt ? `<option value="${i}">${c.name}</option>` : ""))
+      .join("");
+    const blank = '<option value="">— choose a chemical —</option>';
+    lkChem.innerHTML = blank + opts(false);
+    chemOptions = blank + `<optgroup label="Chemicals">${opts(false)}</optgroup>` +
+      `<optgroup label="Dissolved salts (water solutions only)">${opts(true)}</optgroup>`;
+    document.querySelectorAll(".mix-chem").forEach((el) => { el.innerHTML = chemOptions; });
   } catch (err) {
     lkChem.innerHTML = '<option value="">Could not load the chemical list</option>';
   }
@@ -481,9 +481,67 @@ function readNumber(input) {
   return input.value === "" ? NaN : parseFloat(input.value);
 }
 
+function lookupConditions(type) {
+  const tempField = type === "liquid" ? form.temp1_c : form.temp_c;
+  let tC = readNumber(lkTemp);
+  if (!Number.isFinite(tC)) tC = readNumber(tempField);
+  let pBar = readNumber(lkPres);
+  if (!Number.isFinite(pBar)) pBar = readNumber(form.p1_bar);
+  if (!Number.isFinite(tC)) {
+    showLookup("Enter the temperature (°C) for the lookup.", true);
+    return null;
+  }
+  if (type === "gas" && !(pBar > 0)) {
+    showLookup("Enter the pressure (bar, absolute) — gas density depends on it.", true);
+    return null;
+  }
+  lkTemp.value = tC;
+  if (Number.isFinite(pBar)) lkPres.value = pBar;
+  return { tC, pBar, tK: tC + 273.15 };
+}
+
+function methodAt(chem, phase, key, tK) {
+  const tab = chem[phase];
+  const runs = tab[key + "_m"];
+  const list = (chem.src[phase] || {})[key];
+  if (!runs || !list || !list.length) return null;
+  const idx = Math.floor((tK - tab.t0) / tab.dt + 1e-6);
+  let m = runs[0][1];
+  runs.forEach(([start, mi]) => { if (idx >= start) m = mi; });
+  return m == null ? null : list[m];
+}
+
+function describeSource(label, info) {
+  return info.est
+    ? `<span class="warn">${label}: ${info.label} (ESTIMATE)</span>`
+    : `${label}: ${info.label} (measured data)`;
+}
+
+function plainSource(label, info) {
+  return `${label}: ${info.label} (${info.est ? "estimate" : "measured data"})`;
+}
+
+function rangeError(chem, phaseWord, tab, tC) {
+  const [tMin, tMax] = tableRange(tab);
+  return `${chem.name} (${phaseWord}) data covers ${fmt(tMin - 273.15, 3)} to ` +
+    `${fmt(tMax - 273.15, 3)} °C only. ${fmt(tC, 4)} °C is outside that range.`;
+}
+
+function gasConditionNote(tC, pBar) {
+  if (readNumber(form.temp_c) !== tC || readNumber(form.p1_bar) !== pBar) {
+    return `<br><span class="warn">Note: the Stream Temperature / Known Pressure (P1) in the form ` +
+      `are different from the lookup conditions above, so this density may not match the line.</span>`;
+  }
+  return "";
+}
+
 function fillFromDatabase() {
   if (!fluidData) {
     showLookup("The chemical list is still loading. Try again in a moment.", true);
+    return;
+  }
+  if (form.lk_mode.value === "mix") {
+    fillMixture();
     return;
   }
   const chem = fluidData.chemicals[lkChem.value];
@@ -493,53 +551,21 @@ function fillFromDatabase() {
   }
   const type = form.fluid_type.value;
   const phaseWord = type === "liquid" ? "liquid" : "gas";
-  const tempField = type === "liquid" ? form.temp1_c : form.temp_c;
+  const phase = type === "liquid" ? "liq" : "gas";
+  const cond = lookupConditions(type);
+  if (!cond) return;
+  const { tC, pBar, tK } = cond;
 
-  let tC = readNumber(lkTemp);
-  if (!Number.isFinite(tC)) tC = readNumber(tempField);
-  let pBar = readNumber(lkPres);
-  if (!Number.isFinite(pBar)) pBar = readNumber(form.p1_bar);
-  if (!Number.isFinite(tC)) {
-    showLookup("Enter the temperature (°C) for the lookup.", true);
-    return;
-  }
-  if (type === "gas" && !(pBar > 0)) {
-    showLookup("Enter the pressure (bar, absolute) — gas density depends on it.", true);
-    return;
-  }
-  lkTemp.value = tC;
-  if (Number.isFinite(pBar)) lkPres.value = pBar;
-
-  const tab = chem[type === "liquid" ? "liq" : "gas"];
+  const tab = chem[phase];
   if (!tab) {
     showLookup(`The database has no ${phaseWord} data for ${chem.name}.`, true);
     return;
   }
-  const tK = tC + 273.15;
-  const [tMin, tMax] = tableRange(tab);
   const mu = interpolate(tab, "mu", tK, true);
   if (mu == null) {
-    showLookup(
-      `${chem.name} (${phaseWord}) data covers ${fmt(tMin - 273.15, 3)} to ` +
-      `${fmt(tMax - 273.15, 3)} °C only. ${fmt(tC, 4)} °C is outside that range.`, true);
+    showLookup(rangeError(chem, phaseWord, tab, tC), true);
     return;
   }
-
-  const srcs = chem.src[type === "liquid" ? "liq" : "gas"] || {};
-  const methodOf = (key) => {
-    const runs = tab[key + "_m"];
-    const list = srcs[key];
-    if (!runs || !list || !list.length) return null;
-    const idx = Math.floor((tK - tab.t0) / tab.dt + 1e-6);
-    let m = runs[0][1];
-    runs.forEach(([start, mi]) => { if (idx >= start) m = mi; });
-    return m == null ? null : list[m];
-  };
-  const describe = (label, info) => info.est
-    ? `<span class="warn">${label}: ${info.label} (ESTIMATE)</span>`
-    : `${label}: ${info.label} (measured data)`;
-  const plain = (label, info) =>
-    `${label}: ${info.label} (${info.est ? "estimate" : "measured data"})`;
 
   let rho;
   let rhoInfo;
@@ -552,7 +578,7 @@ function fillFromDatabase() {
       showLookup(`No liquid density for ${chem.name} at ${fmt(tC, 4)} °C.`, true);
       return;
     }
-    rhoInfo = methodOf("rho");
+    rhoInfo = methodAt(chem, phase, "rho", tK);
   } else {
     const z = parseFloat(form.z_factor.value) || 1;
     rho = (pBar * 1e5 * chem.mw / 1000) / (z * R_GAS * tK);
@@ -564,14 +590,14 @@ function fillFromDatabase() {
     const g = tab.gamma ? interpolate(tab, "gamma", tK, false) : null;
     if (g != null && g > 1) {
       gammaVal = Number(g.toPrecision(4));
-      gammaInfo = methodOf("gamma");
+      gammaInfo = methodAt(chem, phase, "gamma", tK);
       form.gamma.value = gammaVal;
       extra += `, Cp/Cv (γ) = ${fmt(gammaVal, 4)}`;
     } else {
       extra += `. No Cp/Cv data at this temperature, so γ was left as ${form.gamma.value}`;
     }
   }
-  const muInfo = methodOf("mu");
+  const muInfo = methodAt(chem, phase, "mu", tK);
 
   const rhoVal = sig5(rho);
   const muVal = sig5(mu);
@@ -590,27 +616,22 @@ function fillFromDatabase() {
         `${fmt(psBar, 4)} bar. At ${fmt(pBar, 4)} bar it would be a liquid, not a gas.</span>`;
     }
   }
-
-  if (type === "gas" &&
-      (readNumber(form.temp_c) !== tC || readNumber(form.p1_bar) !== pBar)) {
-    warn += `<br><span class="warn">Note: the Stream Temperature / Known Pressure (P1) in the form ` +
-      `are different from the lookup conditions above, so this density may not match the line.</span>`;
-  }
+  if (type === "gas") warn += gasConditionNote(tC, pBar);
 
   const sourceLines = [];
   const sourceText = [];
   if (rhoInfo) {
-    sourceLines.push(rhoInfo.ideal ? `Density: ${rhoInfo.label}` : describe("Density", rhoInfo));
-    sourceText.push(rhoInfo.ideal ? `density: ${rhoInfo.label}` : plain("density", rhoInfo));
+    sourceLines.push(rhoInfo.ideal ? `Density: ${rhoInfo.label}` : describeSource("Density", rhoInfo));
+    sourceText.push(rhoInfo.ideal ? `density: ${rhoInfo.label}` : plainSource("density", rhoInfo));
   }
   if (muInfo) {
-    sourceLines.push(describe("Viscosity", muInfo));
-    sourceText.push(plain("viscosity", muInfo));
+    sourceLines.push(describeSource("Viscosity", muInfo));
+    sourceText.push(plainSource("viscosity", muInfo));
   }
   let gammaText = null;
   if (gammaInfo) {
-    sourceLines.push(describe("Cp/Cv", gammaInfo));
-    gammaText = plain("Cp/Cv", gammaInfo);
+    sourceLines.push(describeSource("Cp/Cv", gammaInfo));
+    gammaText = plainSource("Cp/Cv", gammaInfo);
   }
 
   const pText = Number.isFinite(pBar) ? `, ${fmt(pBar, 4)} bar` : "";
@@ -624,6 +645,391 @@ function fillFromDatabase() {
     `Filled in from the thermo database: ${chem.name} (${phaseWord}) at ${fmt(tC, 4)} °C${pText} → ` +
     `density = ${fmt(rhoVal, 5)} kg/m³, viscosity = ${fmt(muVal, 5)} Pa·s${extra}.` +
     `<br><small>Sources: ${sourceLines.join("; ")}.</small>` + warn, false);
+}
+
+/* ---------- Mixtures ---------- */
+
+const lkChemLabel = document.getElementById("lk-chem-label");
+const mixBox = document.getElementById("mix-box");
+const mixList = document.getElementById("mix-list");
+const mixBasis = document.getElementById("mix-basis");
+const mixTotal = document.getElementById("mix-total");
+
+function basisWord() {
+  return mixBasis.value === "mole" ? "mole fraction" : "mass fraction";
+}
+
+function updateMixTotal() {
+  const fracs = [...mixList.querySelectorAll(".mix-frac")]
+    .map((el) => parseFloat(el.value)).filter((v) => Number.isFinite(v));
+  mixList.querySelectorAll(".mix-frac-label").forEach((el) => {
+    el.textContent = mixBasis.value === "mole" ? "Mole fraction" : "Mass fraction";
+  });
+  if (!fracs.length) {
+    mixTotal.textContent = "";
+    return;
+  }
+  const total = fracs.reduce((a, b) => a + b, 0);
+  const off = Math.abs(total - 1) > 5e-4;
+  mixTotal.textContent = `Total: ${Number(total.toPrecision(6))}` +
+    (off ? " (will be scaled so the fractions add up to 1)" : "");
+  mixTotal.classList.toggle("off", off);
+}
+
+function addMixRow() {
+  const row = document.createElement("div");
+  row.className = "mix-row";
+  row.innerHTML = `
+    <label>Component
+      <select class="mix-chem">${chemOptions || '<option value="">Loading list…</option>'}</select>
+    </label>
+    <label><span class="mix-frac-label">Mass fraction</span>
+      <input type="number" step="any" min="0" class="mix-frac" />
+    </label>
+    <button type="button" class="remove-fitting" title="Remove">✕</button>`;
+  row.querySelector(".remove-fitting").addEventListener("click", () => {
+    row.remove();
+    updateMixTotal();
+  });
+  row.querySelector(".mix-frac").addEventListener("input", updateMixTotal);
+  mixList.appendChild(row);
+  updateMixTotal();
+}
+
+function syncLookupMode() {
+  const mix = form.lk_mode.value === "mix";
+  mixBox.hidden = !mix;
+  lkChemLabel.hidden = mix;
+  lkMsg.hidden = true;
+  if (mix && !mixList.children.length) {
+    addMixRow();
+    addMixRow();
+  }
+}
+
+document.querySelectorAll('input[name="lk_mode"]').forEach((el) => {
+  el.addEventListener("change", syncLookupMode);
+});
+document.getElementById("mix-add").addEventListener("click", addMixRow);
+mixBasis.addEventListener("change", updateMixTotal);
+
+const WATER_CAS = "7732-18-5";
+
+// Laliberté (2009) model for water solutions; t in °C, ww = mass fraction of water,
+// sol = [{chem, w}] for the dissolved components (same equations as thermo).
+function laliberteDensity(t, ww, sol) {
+  const rhoW = ((((((-2.8054253e-10 * t + 1.0556302e-7) * t - 4.6170461e-5) * t -
+    0.0079870401) * t + 16.945176) * t + 999.83952) / (1 + 0.01687985 * t));
+  let inv = ww / rhoW;
+  sol.forEach(({ chem, w }) => {
+    const [c0, c1, c2, c3, c4] = chem.aq.rho;
+    const tc4 = t + c4;
+    const rhoI = ((c0 * (1 - ww) + c1) * Math.exp(1e-6 * tc4 * tc4)) / ((1 - ww) + c2 + c3 * t);
+    inv += w / rhoI;
+  });
+  return 1 / inv;
+}
+
+function laliberteViscosity(t, ww, sol) {
+  const muW = (t + 246) / ((0.05594 * t + 5.2842) * t + 137.37);
+  let mu = Math.pow(muW, ww);
+  sol.forEach(({ chem, w }) => {
+    const [v1, v2, v3, v4, v5, v6] = chem.aq.mu;
+    const muI = Math.exp((v1 * Math.pow(1 - ww, v2) + v3) / (v4 * t + 1)) /
+      (v5 * Math.pow(1 - ww, v6) + 1);
+    mu *= Math.pow(muI, w);
+  });
+  return mu * 1e-3;
+}
+
+// Wilke mixing rule for low-pressure gas viscosity.
+function wilkeViscosity(x, mu, mw) {
+  let total = 0;
+  for (let i = 0; i < x.length; i++) {
+    let denom = 0;
+    for (let j = 0; j < x.length; j++) {
+      const phi = (1 + Math.sqrt(mu[i] / mu[j]) * Math.pow(mw[j] / mw[i], 0.25)) ** 2 /
+        Math.sqrt(8 * (1 + mw[i] / mw[j]));
+      denom += x[j] * phi;
+    }
+    total += x[i] * mu[i] / denom;
+  }
+  return total;
+}
+
+function fracList(names, values) {
+  return names.map((n, i) => `${n} ${fmt(values[i], 4)}`).join(", ");
+}
+
+function fillMixture() {
+  const type = form.fluid_type.value;
+  const phaseWord = type === "liquid" ? "liquid" : "gas";
+  const phase = type === "liquid" ? "liq" : "gas";
+  const word = basisWord();
+
+  const comps = [];
+  for (const row of mixList.querySelectorAll(".mix-row")) {
+    const idx = row.querySelector(".mix-chem").value;
+    const raw = row.querySelector(".mix-frac").value;
+    if (idx === "" && raw === "") continue;
+    const chem = fluidData.chemicals[idx];
+    if (!chem) {
+      showLookup("Choose a chemical in every component row, or remove the empty row.", true);
+      return;
+    }
+    const f = parseFloat(raw);
+    if (!(f >= 0)) {
+      showLookup(`Enter the ${word} of ${chem.name}.`, true);
+      return;
+    }
+    if (f === 0) continue;
+    if (comps.some((c) => c.chem === chem)) {
+      showLookup(`${chem.name} is listed twice. Put its total in one row.`, true);
+      return;
+    }
+    comps.push({ chem, f });
+  }
+  if (comps.length < 2) {
+    showLookup("A mixture needs at least two components with a fraction above zero. " +
+      "For one chemical, choose “Single chemical” above.", true);
+    return;
+  }
+
+  const cond = lookupConditions(type);
+  if (!cond) return;
+  const { tC, pBar, tK } = cond;
+
+  const names = comps.map((c) => c.chem.name);
+  const mw = comps.map((c) => c.chem.mw);
+  const sum = comps.reduce((a, c) => a + c.f, 0);
+  const given = comps.map((c) => c.f / sum);
+  let x;
+  let w;
+  if (mixBasis.value === "mole") {
+    x = given;
+    const m = x.map((xi, i) => xi * mw[i]);
+    const mt = m.reduce((a, b) => a + b, 0);
+    w = m.map((v) => v / mt);
+  } else {
+    w = given;
+    const n = w.map((wi, i) => wi / mw[i]);
+    const nt = n.reduce((a, b) => a + b, 0);
+    x = n.map((v) => v / nt);
+  }
+
+  const waterIdx = comps.findIndex((c) => c.chem.cas === WATER_CAS);
+  const salts = comps.filter((c) => c.chem.salt).map((c) => c.chem.name);
+  const solutes = comps.filter((c, i) => i !== waterIdx);
+  const aqRho = type === "liquid" && waterIdx >= 0 &&
+    solutes.every((c) => c.chem.aq && c.chem.aq.rho);
+  const aqMu = type === "liquid" && waterIdx >= 0 &&
+    solutes.every((c) => c.chem.aq && c.chem.aq.mu);
+  if (salts.length) {
+    if (type === "gas") {
+      showLookup(`${salts.join(", ")} can only be used dissolved in water (a liquid). ` +
+        "Switch the Fluid Type to Liquid.", true);
+      return;
+    }
+    if (waterIdx < 0) {
+      showLookup(`${salts.join(", ")} can only be used dissolved in water. ` +
+        "Add Water / Steam to the mixture.", true);
+      return;
+    }
+    if (!aqRho || !aqMu) {
+      const lacking = solutes.filter((c) => !(c.chem.aq && c.chem.aq.rho && c.chem.aq.mu))
+        .map((c) => c.chem.name);
+      showLookup("Dissolved salts can only be mixed with water and chemicals that have " +
+        `water-solution data. These have none: ${lacking.join(", ")}.`, true);
+      return;
+    }
+  }
+
+  const mus = [];
+  const rhos = [];
+  const gammas = [];
+  const pss = [];
+  const estimates = [];
+  let usedPure = false;
+  const noteEst = (chem, label, info) => {
+    if (info && info.est) estimates.push(`${chem.name} ${label} (${info.label})`);
+  };
+  for (const { chem } of comps) {
+    const needMu = !aqMu;
+    const needRho = type === "liquid" && !aqRho;
+    if (!needMu && !needRho) continue;
+    usedPure = true;
+    const tab = chem[phase];
+    if (!tab) {
+      showLookup(`The database has no ${phaseWord} data for ${chem.name}, so this mixture ` +
+        `can't be worked out as a ${phaseWord}.`, true);
+      return;
+    }
+    if (needMu) {
+      const mu = interpolate(tab, "mu", tK, true);
+      if (mu == null) {
+        showLookup(rangeError(chem, phaseWord, tab, tC), true);
+        return;
+      }
+      mus.push(mu);
+      noteEst(chem, "viscosity", methodAt(chem, phase, "mu", tK));
+    }
+    if (needRho) {
+      const rho = interpolate(tab, "rho", tK, false);
+      if (rho == null) {
+        showLookup(rangeError(chem, phaseWord, tab, tC), true);
+        return;
+      }
+      rhos.push(rho);
+      noteEst(chem, "density", methodAt(chem, phase, "rho", tK));
+    }
+    if (type === "gas") {
+      const g = tab.gamma ? interpolate(tab, "gamma", tK, false) : null;
+      gammas.push(g != null && g > 1 ? g : null);
+      if (g != null && g > 1) noteEst(chem, "Cp", methodAt(chem, phase, "gamma", tK));
+    }
+    pss.push(interpolate(tab, "ps", tK, true));
+  }
+
+  let rho;
+  let mu;
+  let extra = "";
+  let rhoRule;
+  let muRule;
+  let gammaVal = null;
+  let gammaRule = null;
+  let warn = "";
+  let idealLiquid = false;
+  const mixMw = x.reduce((a, xi, i) => a + xi * mw[i], 0);
+
+  if (type === "liquid") {
+    const ww = waterIdx >= 0 ? w[waterIdx] : 0;
+    const sol = comps.map((c, i) => ({ chem: c.chem, w: w[i] })).filter((c, i) => i !== waterIdx);
+    const outside = [];
+    const checkRange = (key) => {
+      sol.forEach(({ chem, w: wi }) => {
+        const [t0, t1] = chem.aq[key + "T"];
+        const wMax = chem.aq[key + "W"];
+        if (tC < t0 - 0.5 || tC > t1 + 0.5 || wi > wMax + 1e-3) {
+          outside.push(`${chem.name} ${key === "mu" ? "viscosity" : "density"} ` +
+            `(fitted ${fmt(t0, 3)} to ${fmt(t1, 3)} °C, up to ${fmt(wMax * 100, 3)} wt%)`);
+        }
+      });
+    };
+    if (aqRho) {
+      rho = laliberteDensity(tC, ww, sol);
+      rhoRule = "Laliberté (2009) water-solution model";
+      checkRange("rho");
+    }
+    if (aqMu) {
+      mu = laliberteViscosity(tC, ww, sol);
+      muRule = "Laliberté (2009) water-solution model";
+      checkRange("mu");
+    }
+    if ((aqRho && !(rho > 0 && Number.isFinite(rho))) || (aqMu && !(mu > 0 && Number.isFinite(mu)))) {
+      showLookup("The water-solution model gives no sensible value at these conditions " +
+        "(too far outside the range it was fitted for).", true);
+      return;
+    }
+    if (!aqRho) {
+      rho = 1 / w.reduce((a, wi, i) => a + wi / rhos[i], 0);
+      rhoRule = "ideal mixing of the pure-liquid densities (volumes add, 1/ρ = Σ wᵢ/ρᵢ)";
+      idealLiquid = true;
+    }
+    if (!aqMu) {
+      mu = Math.exp(x.reduce((a, xi, i) => a + xi * Math.log(mus[i]), 0));
+      muRule = "logarithmic mole-fraction mixing rule (ln μ = Σ xᵢ ln μᵢ)";
+      idealLiquid = true;
+    }
+    if (outside.length) {
+      warn += "<br><span class=\"warn\">Check: outside the range the water-solution data was " +
+        `fitted for, so these values are extrapolated: ${outside.join("; ")}.</span>`;
+    }
+    if (!aqRho && !aqMu && Number.isFinite(pBar) && pss.every((p) => p != null)) {
+      const bubble = x.reduce((a, xi, i) => a + xi * pss[i], 0);
+      if (bubble > pBar * 1e5) {
+        warn += `<br><span class="warn">Check: at ${fmt(tC, 4)} °C this mixture starts to boil at about ` +
+          `${fmt(bubble / 1e5, 4)} bar (ideal-solution estimate). At ${fmt(pBar, 4)} bar part of it ` +
+          "may be vapor, not all liquid.</span>";
+      }
+    }
+  } else {
+    const z = parseFloat(form.z_factor.value) || 1;
+    rho = (pBar * 1e5 * mixMw / 1000) / (z * R_GAS * tK);
+    mu = wilkeViscosity(x, mus, mw);
+    rhoRule = `ideal gas law, ρ = P·MW/(Z·R·T) with Z = ${fmt(z)} and mixture MW = Σ xᵢ·MWᵢ`;
+    muRule = "Wilke mixing rule";
+    form.molecular_weight.value = sig5(mixMw);
+    if (form.temp_c.value === "") form.temp_c.value = tC;
+    if (form.p1_bar.value === "" && Number.isFinite(pBar)) form.p1_bar.value = pBar;
+    extra = `, MW = ${fmt(mixMw, 5)} kg/kmol`;
+    if (gammas.every((g) => g != null)) {
+      const cp = x.reduce((a, xi, i) => a + xi * R_GAS * gammas[i] / (gammas[i] - 1), 0);
+      gammaVal = Number((cp / (cp - R_GAS)).toPrecision(4));
+      gammaRule = "mole-fraction average of the ideal-gas Cp, then γ = Cp/(Cp − R)";
+      form.gamma.value = gammaVal;
+      extra += `, Cp/Cv (γ) = ${fmt(gammaVal, 4)}`;
+    } else {
+      const missing = names.filter((n, i) => gammas[i] == null).join(", ");
+      extra += `. No Cp/Cv data for ${missing} at this temperature, so γ was left as ${form.gamma.value}`;
+    }
+    const condensing = [];
+    x.forEach((xi, i) => {
+      if (pss[i] != null && xi * pBar * 1e5 > pss[i]) {
+        condensing.push(`${names[i]} (partial pressure ${fmt(xi * pBar, 4)} bar, vapor pressure ` +
+          `${fmt(pss[i] / 1e5, 4)} bar)`);
+      }
+    });
+    if (condensing.length) {
+      warn += `<br><span class="warn">Check: at ${fmt(tC, 4)} °C and ${fmt(pBar, 4)} bar these may ` +
+        `condense: ${condensing.join("; ")}. The stream may not be all gas.</span>`;
+    }
+    warn += gasConditionNote(tC, pBar);
+  }
+
+  const rhoVal = sig5(rho);
+  const muVal = sig5(mu);
+  form.rho.value = rhoVal;
+  form.mu.value = muVal;
+
+  const otherWord = mixBasis.value === "mole" ? "mass" : "mole";
+  const other = mixBasis.value === "mole" ? w : x;
+  const pText = Number.isFinite(pBar) ? `, ${fmt(pBar, 4)} bar` : "";
+  const compText = `${word}s ${fracList(names, given)} (${otherWord} fractions ${fracList(names, other)})`;
+  const scaled = Math.abs(sum - 1) > 5e-4
+    ? ` The fractions added up to ${Number(sum.toPrecision(6))}, so they were scaled to add up to 1.`
+    : "";
+  const pureText = !usedPure ? ""
+    : estimates.length
+      ? `pure-component values are measured data except estimates for ${estimates.join(", ")}`
+      : "all pure-component values are measured data";
+  const pureHtml = !usedPure ? ""
+    : estimates.length
+      ? `Pure-component values are measured data <span class="warn">except ESTIMATES for ` +
+        `${estimates.join(", ")}</span>`
+      : "All pure-component values are measured data";
+  const caution = idealLiquid
+    ? "<br><small>Ideal mixing ignores attraction between unlike molecules. It suits similar " +
+      "liquids (e.g. hydrocarbons) but can be far off for strongly polar mixtures. " +
+      "Check against plant or literature data for those.</small>"
+    : "";
+
+  const sourceLines = [`Density: ${rhoRule}`, `Viscosity: ${muRule}`];
+  if (gammaRule) sourceLines.push(`Cp/Cv: ${gammaRule}`);
+  if (pureHtml) sourceLines.push(pureHtml);
+
+  lastLookup = {
+    type, rho: rhoVal, mu: muVal, gamma: gammaVal,
+    base: `Mixture (${phaseWord}) at ${fmt(tC, 4)} °C${pText}, ${compText}; ` +
+      "data from the Python thermo library" + (pureText ? `, ${pureText}` : ""),
+    text: `density: ${rhoRule}; viscosity: ${muRule}` + (idealLiquid ? " (ideal-mixing estimate)" : "") +
+      (warn.includes("extrapolated") ? " (extrapolated outside the fitted range)" : ""),
+    gammaText: gammaRule ? `Cp/Cv: ${gammaRule}` : null,
+  };
+  showLookup(
+    `Filled in from the thermo database: mixture (${phaseWord}) at ${fmt(tC, 4)} °C${pText} → ` +
+    `density = ${fmt(rhoVal, 5)} kg/m³, viscosity = ${fmt(muVal, 5)} Pa·s${extra}.${scaled}` +
+    `<br><small>Composition: ${compText}.</small>` +
+    `<br><small>Sources: ${sourceLines.join("; ")}.</small>` + caution + warn, false);
 }
 
 document.getElementById("lk-fill").addEventListener("click", fillFromDatabase);

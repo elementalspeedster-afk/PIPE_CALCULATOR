@@ -413,3 +413,21 @@ footer {
 
 .lookup-msg small { display: inline-block; margin-top: 4px; font-size: 0.8rem; color: var(--text-muted); }
 .lookup-msg small .warn { font-weight: 600; }
+
+.lookup-mode { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.radio-pill.small { flex: 0 1 auto; padding: 8px 14px; font-size: 0.9rem; }
+#mix-box { margin-bottom: 12px; }
+.mix-head { display: flex; gap: 16px; align-items: end; flex-wrap: wrap; margin-bottom: 10px; }
+.mix-head label { margin: 0; }
+.mix-total { margin: 0 0 8px; font-size: 0.85rem; color: var(--text-muted); }
+.mix-total.off { color: var(--error); font-weight: 600; }
+#mix-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.mix-row {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.mix-row label { margin: 0; }
+.mix-row select, .mix-row input { width: 100%; min-width: 0; }
+footer .credits { margin-top: 4px; font-weight: 600; }
