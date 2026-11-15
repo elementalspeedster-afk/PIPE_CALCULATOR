@@ -410,3 +410,6 @@ footer {
 
 .lookup-msg.is-error { color: var(--error); }
 .lookup-msg .warn { color: var(--error); font-weight: 600; }
+
+.lookup-msg small { display: inline-block; margin-top: 4px; font-size: 0.8rem; color: var(--text-muted); }
+.lookup-msg small .warn { font-weight: 600; }

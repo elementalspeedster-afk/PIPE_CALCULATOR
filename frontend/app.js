@@ -525,7 +525,26 @@ function fillFromDatabase() {
     return;
   }
 
+  const srcs = chem.src[type === "liquid" ? "liq" : "gas"] || {};
+  const methodOf = (key) => {
+    const runs = tab[key + "_m"];
+    const list = srcs[key];
+    if (!runs || !list || !list.length) return null;
+    const idx = Math.floor((tK - tab.t0) / tab.dt + 1e-6);
+    let m = runs[0][1];
+    runs.forEach(([start, mi]) => { if (idx >= start) m = mi; });
+    return m == null ? null : list[m];
+  };
+  const describe = (label, info) => info.est
+    ? `<span class="warn">${label}: ${info.label} (ESTIMATE)</span>`
+    : `${label}: ${info.label} (measured data)`;
+  const plain = (label, info) =>
+    `${label}: ${info.label} (${info.est ? "estimate" : "measured data"})`;
+
   let rho;
+  let rhoInfo;
+  let gammaVal = null;
+  let gammaInfo = null;
   let extra = "";
   if (type === "liquid") {
     rho = interpolate(tab, "rho", tK, false);
@@ -533,15 +552,26 @@ function fillFromDatabase() {
       showLookup(`No liquid density for ${chem.name} at ${fmt(tC, 4)} °C.`, true);
       return;
     }
+    rhoInfo = methodOf("rho");
   } else {
     const z = parseFloat(form.z_factor.value) || 1;
     rho = (pBar * 1e5 * chem.mw / 1000) / (z * R_GAS * tK);
+    rhoInfo = { label: `ideal gas law, ρ = P·MW/(Z·R·T) with Z = ${fmt(z)}`, est: false, ideal: true };
     form.molecular_weight.value = sig5(chem.mw);
     if (form.temp_c.value === "") form.temp_c.value = tC;
     if (form.p1_bar.value === "" && Number.isFinite(pBar)) form.p1_bar.value = pBar;
-    extra = `, MW = ${fmt(chem.mw, 5)} kg/kmol (filled in too)`;
-    if (z !== 1) extra += `; density uses Z = ${fmt(z)} from the form`;
+    extra = `, MW = ${fmt(chem.mw, 5)} kg/kmol`;
+    const g = tab.gamma ? interpolate(tab, "gamma", tK, false) : null;
+    if (g != null && g > 1) {
+      gammaVal = Number(g.toPrecision(4));
+      gammaInfo = methodOf("gamma");
+      form.gamma.value = gammaVal;
+      extra += `, Cp/Cv (γ) = ${fmt(gammaVal, 4)}`;
+    } else {
+      extra += `. No Cp/Cv data at this temperature, so γ was left as ${form.gamma.value}`;
+    }
   }
+  const muInfo = methodOf("mu");
 
   const rhoVal = sig5(rho);
   const muVal = sig5(mu);
@@ -567,23 +597,46 @@ function fillFromDatabase() {
       `are different from the lookup conditions above, so this density may not match the line.</span>`;
   }
 
+  const sourceLines = [];
+  const sourceText = [];
+  if (rhoInfo) {
+    sourceLines.push(rhoInfo.ideal ? `Density: ${rhoInfo.label}` : describe("Density", rhoInfo));
+    sourceText.push(rhoInfo.ideal ? `density: ${rhoInfo.label}` : plain("density", rhoInfo));
+  }
+  if (muInfo) {
+    sourceLines.push(describe("Viscosity", muInfo));
+    sourceText.push(plain("viscosity", muInfo));
+  }
+  let gammaText = null;
+  if (gammaInfo) {
+    sourceLines.push(describe("Cp/Cv", gammaInfo));
+    gammaText = plain("Cp/Cv", gammaInfo);
+  }
+
   const pText = Number.isFinite(pBar) ? `, ${fmt(pBar, 4)} bar` : "";
   lastLookup = {
-    type, rho: rhoVal, mu: muVal,
-    text: `${chem.name} (${phaseWord}) at ${fmt(tC, 4)} °C${pText}, from the Python thermo library`,
+    type, rho: rhoVal, mu: muVal, gamma: gammaVal,
+    base: `${chem.name} (${phaseWord}) at ${fmt(tC, 4)} °C${pText}, Python thermo library`,
+    text: sourceText.join("; "),
+    gammaText,
   };
   showLookup(
     `Filled in from the thermo database: ${chem.name} (${phaseWord}) at ${fmt(tC, 4)} °C${pText} → ` +
-    `density = ${fmt(rhoVal, 5)} kg/m³, viscosity = ${fmt(muVal, 5)} Pa·s${extra}.` + warn, false);
+    `density = ${fmt(rhoVal, 5)} kg/m³, viscosity = ${fmt(muVal, 5)} Pa·s${extra}.` +
+    `<br><small>Sources: ${sourceLines.join("; ")}.</small>` + warn, false);
 }
 
 document.getElementById("lk-fill").addEventListener("click", fillFromDatabase);
 
 function propertySource(payload) {
-  if (!lastLookup) return undefined;
-  const same = lastLookup.type === payload.fluid_type
-    && lastLookup.rho === payload.rho && lastLookup.mu === payload.mu;
-  return same ? lastLookup.text : undefined;
+  if (!lastLookup || lastLookup.type !== payload.fluid_type) return undefined;
+  const parts = [];
+  if (lastLookup.rho === payload.rho && lastLookup.mu === payload.mu) parts.push(lastLookup.text);
+  if (payload.fluid_type === "gas" && lastLookup.gammaText && lastLookup.gamma === payload.gamma) {
+    parts.push(lastLookup.gammaText);
+  }
+  if (!parts.length) return undefined;
+  return `${lastLookup.base}. ${parts.join("; ")}.`;
 }
 
 function collectFittings() {
